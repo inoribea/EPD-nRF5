@@ -29,7 +29,7 @@ The local image-transfer page can render an AIUsage dashboard to the display and
   ```
 
 - Node.js 20 or newer for the OpenChamber quota bridge.
-- OpenChamber running locally on `127.0.0.1:4096` with OpenCode Go quota access configured.
+- OpenChamber running locally on `127.0.0.1:4096` with OpenCode Go and Kimi Code quota access configured.
 
 ### Start the Local Services
 
@@ -45,7 +45,7 @@ In a second terminal, start the loopback-only OpenChamber quota bridge from the 
 node tools/openchamber-quota-bridge.mjs
 ```
 
-The bridge listens only on `127.0.0.1:8788`. It reads the OpenChamber desktop client credential locally, queries OpenChamber's OpenCode Go quota route, and exposes only the monthly `usedPercent` and reset time to the dashboard. It never sends a credential to the browser or stores one in this repository.
+The bridge listens only on `127.0.0.1:8788`. It reads the OpenChamber desktop client credential locally, queries OpenChamber's OpenCode Go monthly and Kimi Code weekly quota routes, and exposes only each quota's `usedPercent` and reset time to the dashboard. It never sends a credential to the browser or stores one in this repository.
 
 ### Open the Dashboard and Send an Image
 
@@ -67,7 +67,7 @@ The dashboard is optimized for black/white or black/white/red panels:
 
 - Cost, session count, and active-day count for the selected AIUsage range.
 - A daily trend chart using the latest 30 reported dates, with black dashed token usage and red solid cost usage.
-- Codex weekly and OpenCode Go monthly quota bars. The displayed percentage and fill represent **remaining** quota, not used quota.
+- Compact Codex weekly, Kimi Code weekly, and OpenCode Go monthly quota bars. The displayed percentage and fill represent **remaining** quota, not used quota.
 - Up to four models in the order returned by AIUsage for the selected range.
 - A centered local render timestamp in the header.
 
@@ -79,6 +79,7 @@ AIUsage data is read from its local API endpoints: `/api/summary`, `/api/tokens`
 | --- | --- |
 | `AIUsage send failed: Failed to fetch` | Verify that `aiusage serve` is running and that the API URL points to `http://localhost:3847/api/summary?range=month`. |
 | `OpenCode Go monthly quota` shows `UNAVAILABLE` | Start `node tools/openchamber-quota-bridge.mjs`, ensure OpenChamber is running on port `4096`, and verify that OpenCode Go quota access is configured in OpenChamber. |
+| `Kimi Code weekly quota` shows `N/A` | Configure the `kimi-for-coding` provider in OpenChamber, then restart `node tools/openchamber-quota-bridge.mjs`. |
 | The Driver field is empty or image transfer reports an invalid driver | Choose the correct display driver manually, then retry the transfer. |
 | The device cannot be selected | Use Chrome or Edge, confirm Bluetooth is enabled, and reconnect from the local `html/index.html` page. |
 | The timer stops refreshing | Keep the local dashboard page open and avoid backgrounding it for extended periods. |
