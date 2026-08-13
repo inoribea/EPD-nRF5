@@ -66,7 +66,7 @@ The bridge listens only on `127.0.0.1:8788`. It reads the OpenChamber desktop cl
 The dashboard is optimized for black/white or black/white/red panels:
 
 - Cost, session count, and active-day count for the selected AIUsage range.
-- A daily trend chart for the selected range (up to the latest 30 reported dates), with black dashed token usage and red solid cost usage.
+- A daily trend chart using the latest 30 reported dates, with black dashed token usage and red solid cost usage.
 - Codex weekly and OpenCode Go monthly quota bars. The displayed percentage and fill represent **remaining** quota, not used quota.
 - Up to four models in the order returned by AIUsage for the selected range.
 - A centered local render timestamp in the header.
