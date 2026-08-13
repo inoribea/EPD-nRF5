@@ -6,7 +6,7 @@ import { join } from 'node:path';
 const HOST = '127.0.0.1';
 const PORT = 8788;
 const SETTINGS_PATH = join(homedir(), '.config', 'openchamber', 'settings.json');
-const UPSTREAM_URL = 'http://127.0.0.1:4096/api/quota/opencode-go';
+const UPSTREAM_BASE_URL = 'http://127.0.0.1:4096/api/quota';
 
 function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, {
@@ -17,26 +17,26 @@ function sendJson(response, statusCode, body) {
   response.end(JSON.stringify(body));
 }
 
-async function getMonthlyQuota() {
+async function getQuota(providerId, windowName) {
   const settings = JSON.parse(await readFile(SETTINGS_PATH, 'utf8'));
   const token = settings.desktopLocalClientToken;
   if (typeof token !== 'string' || token.length === 0) throw new Error('OpenChamber client token is unavailable');
 
-  const upstream = await fetch(UPSTREAM_URL, {
+  const upstream = await fetch(`${UPSTREAM_BASE_URL}/${providerId}`, {
     headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15000),
   });
   if (!upstream.ok) throw new Error(`OpenChamber quota request failed with HTTP ${upstream.status}`);
 
   const payload = await upstream.json();
-  const monthly = payload?.usage?.windows?.monthly;
-  if (!monthly || typeof monthly.usedPercent !== 'number') throw new Error('OpenChamber monthly quota is unavailable');
+  const usageWindow = payload?.usage?.windows?.[windowName];
+  if (!usageWindow || typeof usageWindow.usedPercent !== 'number') throw new Error('OpenChamber quota is unavailable');
 
   return {
     ok: true,
-    monthly: {
-      resetsAt: monthly.resetAt ?? null,
-      usedPercent: Math.max(0, Math.min(100, monthly.usedPercent)),
+    quota: {
+      resetsAt: usageWindow.resetAt ?? null,
+      usedPercent: Math.max(0, Math.min(100, usageWindow.usedPercent)),
     },
   };
 }
@@ -44,14 +44,21 @@ async function getMonthlyQuota() {
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? HOST}`);
   if (request.method === 'OPTIONS') return sendJson(response, 204, {});
-  if (request.method !== 'GET' || url.pathname !== '/api/opencode-go/monthly') {
+  if (request.method !== 'GET') {
     return sendJson(response, 404, { ok: false, error: 'Not found' });
   }
 
+  const routes = {
+    '/api/opencode-go/monthly': { providerId: 'opencode-go', windowName: 'monthly', error: 'OpenCode Go monthly quota is unavailable' },
+    '/api/kimi-code/weekly': { providerId: 'kimi-for-coding', windowName: 'weekly', error: 'Kimi Code weekly quota is unavailable' },
+  };
+  const route = routes[url.pathname];
+  if (!route) return sendJson(response, 404, { ok: false, error: 'Not found' });
+
   try {
-    return sendJson(response, 200, await getMonthlyQuota());
+    return sendJson(response, 200, await getQuota(route.providerId, route.windowName));
   } catch {
-    return sendJson(response, 503, { ok: false, error: 'OpenCode Go monthly quota is unavailable' });
+    return sendJson(response, 503, { ok: false, error: route.error });
   }
 });
 

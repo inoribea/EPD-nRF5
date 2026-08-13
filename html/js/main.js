@@ -251,6 +251,33 @@ function drawQuotaBar(x, y, width, height, label, quota, tinySize, smallSize) {
   ctx.fillText(resetText, x, y + height);
 }
 
+function drawCompactQuotaBar(x, y, width, height, label, quota, tinySize, smallSize) {
+  const available = quota && typeof quota.usedPercent === 'number';
+  const percent = available ? 100 - Math.max(0, Math.min(100, quota.usedPercent)) : 0;
+  const status = available ? Math.round(percent) + '%' : 'N/A';
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  ctx.font = 'bold ' + smallSize + 'px Arial';
+  ctx.fillStyle = '#000000';
+  ctx.fillText(label, x, y);
+  ctx.textAlign = 'right';
+  ctx.fillText(status, x + width, y);
+
+  const barY = y + Math.round(height * 0.24);
+  const barH = Math.max(6, Math.round(height * 0.28));
+  ctx.strokeStyle = '#000000';
+  ctx.strokeRect(x, barY, width, barH);
+  if (available && percent > 0) {
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(x + 1, barY + 1, Math.max(1, Math.round((width - 2) * percent / 100)), Math.max(1, barH - 2));
+  }
+
+  ctx.textAlign = 'left';
+  ctx.font = tinySize + 'px Arial';
+  const resetText = quota && quota.resetsAt ? 'RESET ' + new Date(quota.resetsAt).toLocaleDateString() : '';
+  ctx.fillText(resetText, x, y + height);
+}
+
 function renderAIUsageToCanvas(data) {
   const summary = data.summary || {};
   const trend = data.trend || [];
@@ -302,7 +329,8 @@ function renderAIUsageToCanvas(data) {
   ctx.font = 'bold ' + statValSize + 'px Arial';
   for (let i = 0; i < 3; i++) {
     const cx = pad + col * i + col / 2;
-    ctx.fillText(stats[i].v, cx, statsY);
+    const valueY = statsY - (i === 2 ? Math.max(1, Math.round(h * 0.008)) : 0);
+    ctx.fillText(stats[i].v, cx, valueY);
   }
   ctx.font = statLabSize + 'px Arial';
   for (let i = 0; i < 3; i++) {
@@ -314,7 +342,7 @@ function renderAIUsageToCanvas(data) {
 
   // Daily trend chart — dual line (tokens solid, cost dashed)
   const chartTop = statsBottom + Math.round(h * 0.055);
-  const chartH = Math.round(h * 0.25);
+  const chartH = Math.round(h * 0.31);
   const chartBottom = chartTop + chartH;
   const trendRows = trend.slice(-30);
   const costRows = Array.isArray(data.cost) ? data.cost.slice(-30) : [];
@@ -406,13 +434,14 @@ function renderAIUsageToCanvas(data) {
     }
   }
 
-  // Subscription quota cards sit below the chart.
+  // Compact subscription quota bars sit below the chart.
   const quotaTop = chartBottom + Math.round(h * 0.08);
   const quotaHeight = Math.max(28, Math.round(h * 0.095));
-  const quotaGap = Math.max(12, Math.round(h * 0.045));
-  const quotaWidth = w - 2 * pad;
-  drawQuotaBar(pad, quotaTop, quotaWidth, quotaHeight, 'CODEX WEEKLY', aiusageCodexWeekly(data.quotas), tinySize, smallSize);
-  drawQuotaBar(pad, quotaTop + quotaHeight + quotaGap, quotaWidth, quotaHeight, 'OPENCODE GO MONTHLY', data.goMonthly, tinySize, smallSize);
+  const quotaGap = Math.max(6, Math.round(w * 0.015));
+  const quotaWidth = Math.floor((w - 2 * pad - 2 * quotaGap) / 3);
+  drawCompactQuotaBar(pad, quotaTop, quotaWidth, quotaHeight, 'CODEX', aiusageCodexWeekly(data.quotas), tinySize, smallSize);
+  drawCompactQuotaBar(pad + quotaWidth + quotaGap, quotaTop, quotaWidth, quotaHeight, 'KIMI CODE', data.kimiWeekly, tinySize, smallSize);
+  drawCompactQuotaBar(pad + 2 * (quotaWidth + quotaGap), quotaTop, quotaWidth, quotaHeight, 'OPENCODE GO', data.goMonthly, tinySize, smallSize);
 
   // Footer: up to four models supplied by AIUsage
   const footY = h - pad;
@@ -487,19 +516,32 @@ async function fetchAIUsageData() {
   }
 
   let goMonthly = null;
+  let kimiWeekly = null;
   try {
     const goResp = await fetch('http://127.0.0.1:8788/api/opencode-go/monthly');
     if (goResp.ok) {
       const goJson = await goResp.json();
-      if (goJson.ok === true && goJson.monthly && typeof goJson.monthly.usedPercent === 'number') {
-        goMonthly = goJson.monthly;
+      if (goJson.ok === true && goJson.quota && typeof goJson.quota.usedPercent === 'number') {
+        goMonthly = goJson.quota;
       }
     }
   } catch (e) {
     console.warn('OpenCode Go quota fetch failed:', e);
   }
 
-  return { summary: summary, trend: trend, cost: cost, models: models, quotas: quotas, goMonthly: goMonthly, range: range };
+  try {
+    const kimiResp = await fetch('http://127.0.0.1:8788/api/kimi-code/weekly');
+    if (kimiResp.ok) {
+      const kimiJson = await kimiResp.json();
+      if (kimiJson.ok === true && kimiJson.quota && typeof kimiJson.quota.usedPercent === 'number') {
+        kimiWeekly = kimiJson.quota;
+      }
+    }
+  } catch (e) {
+    console.warn('Kimi Code quota fetch failed:', e);
+  }
+
+  return { summary: summary, trend: trend, cost: cost, models: models, quotas: quotas, goMonthly: goMonthly, kimiWeekly: kimiWeekly, range: range };
 }
 
 async function reconnectAIUsageDevice() {
