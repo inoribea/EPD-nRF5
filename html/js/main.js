@@ -175,6 +175,365 @@ async function syncTime(mode) {
   }
 }
 
+// ---- AIUsage: fetch usage summary, render to canvas, push as image ----
+let aiusageTimer = null;
+let aiusageBusy = false;
+
+function aiusageNum(value, fallback) {
+  return (typeof value === 'number' && Number.isFinite(value) && value >= 0) ? value : fallback;
+}
+
+function aiusageTopModels(models) {
+  if (!Array.isArray(models)) return 'UNAVAILABLE';
+  const names = models.slice(0, 4)
+    .map(model => model && typeof model.model === 'string' ? model.model : '')
+    .filter(Boolean);
+  return names.length > 0 ? names.join(' · ') : 'UNAVAILABLE';
+}
+
+function aiusageFormatTokens(n) {
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(Math.round(n));
+}
+
+function aiusagePeriodLabel(range) {
+  switch (range) {
+    case 'last30': return 'LAST 30 DAYS';
+    case 'week': return 'THIS WEEK';
+    case 'month': return 'THIS MONTH';
+    case 'all': return 'ALL TIME';
+    default: return 'TODAY';
+  }
+}
+
+function aiusageDailyTotal(row) {
+  return (row.inputTokens || 0) + (row.outputTokens || 0) + (row.cacheReadTokens || 0) +
+         (row.cacheWriteTokens || 0) + (row.thinkingTokens || 0);
+}
+
+function aiusageCodexWeekly(quotas) {
+  if (!Array.isArray(quotas)) return null;
+  const codex = quotas.find(quota => quota && quota.tool === 'codex' && quota.success === true);
+  const weekly = codex && Array.isArray(codex.tiers) ? codex.tiers.find(tier => tier && tier.name === 'weekly_limit') : null;
+  return weekly && typeof weekly.utilization === 'number' ? {
+    usedPercent: Math.max(0, Math.min(100, weekly.utilization)),
+    resetsAt: weekly.resetsAt || null,
+  } : null;
+}
+
+function drawQuotaBar(x, y, width, height, label, quota, tinySize, smallSize) {
+  const available = quota && typeof quota.usedPercent === 'number';
+  const percent = available ? 100 - Math.max(0, Math.min(100, quota.usedPercent)) : 0;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = 'bold ' + smallSize + 'px Arial';
+  ctx.fillStyle = '#000000';
+  ctx.fillText(label, x, y);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#000000';
+  ctx.fillText(available ? Math.round(percent) + '%' : 'UNAVAILABLE', x + width, y);
+
+  const barY = y + Math.round(height * 0.24);
+  const barH = Math.max(8, Math.round(height * 0.34));
+  ctx.strokeStyle = '#000000';
+  ctx.strokeRect(x, barY, width, barH);
+  if (available && percent > 0) {
+    ctx.fillStyle = '#000000';
+    ctx.fillRect(x + 1, barY + 1, Math.max(1, Math.round((width - 2) * percent / 100)), Math.max(1, barH - 2));
+  }
+
+  ctx.fillStyle = '#000000';
+  ctx.textAlign = 'left';
+  ctx.font = tinySize + 'px Arial';
+  const resetText = quota && quota.resetsAt ? 'RESET ' + new Date(quota.resetsAt).toLocaleDateString() : '';
+  ctx.fillText(resetText, x, y + height);
+}
+
+function renderAIUsageToCanvas(data) {
+  const summary = data.summary || {};
+  const trend = data.trend || [];
+  const range = data.range || 'day';
+  const w = canvas.width, h = canvas.height;
+  fillCanvas('white');
+  const pad = Math.max(10, Math.round(Math.min(w, h) * 0.05));
+
+  const totalCost = aiusageNum(summary.totalCost, 0);
+  const totalSessions = Math.round(aiusageNum(summary.totalSessions, 0));
+  const activeDays = Math.round(aiusageNum(summary.activeDays, 0));
+  const topModels = aiusageTopModels(data.models);
+
+  const titleSize = Math.max(14, Math.round(h * 0.06));
+  const smallSize = Math.max(11, Math.round(h * 0.04));
+  const tinySize = Math.max(9, Math.round(h * 0.032));
+
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#000000';
+
+  // Header: title + period
+  ctx.textAlign = 'left';
+  ctx.font = 'bold ' + titleSize + 'px Arial';
+  ctx.fillText('AI USAGE', pad, pad + titleSize);
+  ctx.textAlign = 'center';
+  ctx.font = tinySize + 'px Arial';
+  ctx.fillText(new Date().toLocaleString([], {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  }), w / 2, pad + titleSize);
+  ctx.textAlign = 'right';
+  ctx.font = tinySize + 'px Arial';
+  ctx.fillText(aiusagePeriodLabel(range), w - pad, pad + titleSize);
+  const headBottom = pad + titleSize + Math.round(h * 0.015);
+  ctx.fillRect(pad, headBottom, w - 2 * pad, Math.max(1, Math.round(h * 0.004)));
+
+  // Compact summary metrics occupy the former quota-card position.
+  const statsY = headBottom + Math.round(h * 0.075);
+  const col = (w - 2 * pad) / 3;
+  const statValSize = Math.max(16, Math.round(h * 0.06));
+  const statLabSize = Math.max(9, Math.round(h * 0.032));
+  const statLabelY = statsY + Math.round(h * 0.045);
+  const stats = [
+    { v: '$' + totalCost.toFixed(2), l: 'COST' },
+    { v: String(totalSessions), l: 'SESSIONS' },
+    { v: String(activeDays), l: 'ACTIVE DAYS' },
+  ];
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold ' + statValSize + 'px Arial';
+  for (let i = 0; i < 3; i++) {
+    const cx = pad + col * i + col / 2;
+    ctx.fillText(stats[i].v, cx, statsY);
+  }
+  ctx.font = statLabSize + 'px Arial';
+  for (let i = 0; i < 3; i++) {
+    const cx = pad + col * i + col / 2;
+    ctx.fillText(stats[i].l, cx, statLabelY);
+  }
+  ctx.textBaseline = 'alphabetic';
+  const statsBottom = statLabelY + Math.round(h * 0.025);
+
+  // Daily trend chart — dual line (tokens solid, cost dashed)
+  const chartTop = statsBottom + Math.round(h * 0.055);
+  const chartH = Math.round(h * 0.25);
+  const chartBottom = chartTop + chartH;
+  const trendRows = trend.slice(-30);
+  const costRows = Array.isArray(data.cost) ? data.cost.slice(-30) : [];
+  const costByDate = {};
+  for (const r of costRows) {
+    if (r && r.date) costByDate[r.date] = aiusageNum(r.cost, 0);
+  }
+  const days = trendRows.map(aiusageDailyTotal);
+  const costs = trendRows.map(r => aiusageNum(costByDate[r.date], 0));
+  const maxTok = Math.max(1, ...days);
+  const maxCost = Math.max(0.01, ...costs);
+
+  ctx.font = tinySize + 'px Arial';
+  const tickGap = Math.round(w * 0.01);
+  const leftLabelW = Math.max(Math.round(ctx.measureText(aiusageFormatTokens(maxTok)).width), Math.round(w * 0.04));
+  const rightLabelW = Math.max(Math.round(ctx.measureText('$' + maxCost.toFixed(2)).width), Math.round(w * 0.04));
+  const dateLabelH = Math.round(h * 0.055);
+  const plotLeft = pad + leftLabelW + tickGap;
+  const plotRight = w - pad - rightLabelW - tickGap;
+  const plotTop = chartTop;
+  const plotBottom = chartBottom - dateLabelH;
+  const plotW = Math.max(1, plotRight - plotLeft);
+  const plotH = Math.max(1, plotBottom - plotTop);
+
+  // Horizontal dotted grid lines + left token labels + right cost labels
+  ctx.lineWidth = 1;
+  ctx.setLineDash([1, 2]);
+  const gridSteps = 3;
+  for (let g = 0; g <= gridSteps; g++) {
+    const gy = plotTop + Math.round(plotH * g / gridSteps);
+    ctx.beginPath();
+    ctx.moveTo(plotLeft, gy);
+    ctx.lineTo(plotRight, gy);
+    ctx.stroke();
+    const tokVal = maxTok * (1 - g / gridSteps);
+    const costVal = maxCost * (1 - g / gridSteps);
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    ctx.fillText(aiusageFormatTokens(tokVal), plotLeft - Math.round(w * 0.005), gy);
+    ctx.textAlign = 'left';
+    ctx.fillText('$' + (costVal >= 100 ? costVal.toFixed(0) : costVal >= 1 ? costVal.toFixed(2) : costVal.toFixed(3)),
+                 plotRight + Math.round(w * 0.005), gy);
+  }
+  ctx.setLineDash([]);
+  ctx.textBaseline = 'alphabetic';
+
+  // Baseline
+  ctx.fillRect(plotLeft, plotBottom, plotW, Math.max(1, Math.round(h * 0.003)));
+
+  if (days.length > 0) {
+    const slot = days.length > 1 ? plotW / (days.length - 1) : 0;
+    ctx.strokeStyle = '#FF0000';
+
+    // Token line (solid red)
+    ctx.beginPath();
+    for (let i = 0; i < days.length; i++) {
+      const x = plotLeft + i * slot;
+      const y = plotTop + plotH - (days[i] / maxTok) * plotH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Cost line (dashed red)
+    ctx.setLineDash([Math.max(2, Math.round(w * 0.012)), Math.max(2, Math.round(w * 0.008))]);
+    ctx.beginPath();
+    for (let i = 0; i < costs.length; i++) {
+      const x = plotLeft + i * slot;
+      const y = plotTop + plotH - (costs[i] / maxCost) * plotH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#000000';
+
+    // Date tick labels (first / middle / last)
+    ctx.textAlign = 'center';
+    ctx.font = tinySize + 'px Arial';
+    const tickIdx = [0, Math.floor((days.length - 1) / 2), days.length - 1];
+    for (const i of tickIdx) {
+      if (i < 0 || i >= trendRows.length) continue;
+      const x = plotLeft + i * slot;
+      const row = trendRows[i];
+      const label = row && row.date ? String(row.date).slice(5) : '';
+      ctx.fillText(label, x, chartBottom - Math.round(h * 0.008));
+    }
+  }
+
+  // Subscription quota cards sit below the chart.
+  const quotaTop = chartBottom + Math.round(h * 0.08);
+  const quotaHeight = Math.max(28, Math.round(h * 0.095));
+  const quotaGap = Math.max(12, Math.round(h * 0.045));
+  const quotaWidth = w - 2 * pad;
+  drawQuotaBar(pad, quotaTop, quotaWidth, quotaHeight, 'CODEX WEEKLY', aiusageCodexWeekly(data.quotas), tinySize, smallSize);
+  drawQuotaBar(pad, quotaTop + quotaHeight + quotaGap, quotaWidth, quotaHeight, 'OPENCODE GO MONTHLY', data.goMonthly, tinySize, smallSize);
+
+  // Footer: three most-used models
+  const footY = h - pad;
+  ctx.textAlign = 'left';
+  ctx.font = smallSize + 'px Arial';
+  ctx.fillText('TOP  ' + topModels, pad, footY);
+}
+
+async function fetchAIUsageData() {
+  const url = document.getElementById('aiusageurl').value;
+  if (!url) throw new Error('请填写 AIUsage API 地址。');
+  const parsed = new URL(url, location.href);
+  const range = parsed.searchParams.get('range') || 'day';
+
+  const summaryResp = await fetch(url);
+  if (!summaryResp.ok) throw new Error(`AIUsage API returned HTTP ${summaryResp.status}`);
+  const summary = await summaryResp.json();
+
+  const trendRange = range === 'all' ? 'last30' : range;
+  const trendUrl = new URL('/api/tokens', parsed.origin);
+  trendUrl.searchParams.set('range', trendRange);
+  let trend = [];
+  try {
+    const trendResp = await fetch(trendUrl.toString());
+    if (trendResp.ok) {
+      const trendJson = await trendResp.json();
+      trend = Array.isArray(trendJson.data) ? trendJson.data : [];
+    }
+  } catch (e) {
+    console.warn('AIUsage trend fetch failed:', e);
+  }
+
+  // Fetch aligned daily cost data for the dual-axis line chart.
+  // /api/cost returns {data:[{date,cost}], byTool, byModel}; we only need data.
+  const costUrl = new URL('/api/cost', parsed.origin);
+  costUrl.searchParams.set('range', 'last30');
+  let cost = [];
+  try {
+    const costResp = await fetch(costUrl.toString());
+    if (costResp.ok) {
+      const costJson = await costResp.json();
+      cost = Array.isArray(costJson.data) ? costJson.data : [];
+    }
+  } catch (e) {
+    console.warn('AIUsage cost fetch failed:', e);
+  }
+
+  const modelsUrl = new URL('/api/models', parsed.origin);
+  modelsUrl.searchParams.set('range', range);
+  let models = null;
+  try {
+    const modelsResp = await fetch(modelsUrl.toString());
+    if (modelsResp.ok) {
+      const modelsJson = await modelsResp.json();
+      models = Array.isArray(modelsJson.models) ? modelsJson.models : null;
+    }
+  } catch (e) {
+    console.warn('AIUsage models fetch failed:', e);
+  }
+
+  const quotasUrl = new URL('/api/quotas', parsed.origin);
+  let quotas = null;
+  try {
+    const quotasResp = await fetch(quotasUrl.toString());
+    if (quotasResp.ok) {
+      const quotasJson = await quotasResp.json();
+      quotas = Array.isArray(quotasJson.quotas) ? quotasJson.quotas : null;
+    }
+  } catch (e) {
+    console.warn('AIUsage quota fetch failed:', e);
+  }
+
+  let goMonthly = null;
+  try {
+    const goResp = await fetch('http://127.0.0.1:8788/api/opencode-go/monthly');
+    if (goResp.ok) {
+      const goJson = await goResp.json();
+      if (goJson.ok === true && goJson.monthly && typeof goJson.monthly.usedPercent === 'number') {
+        goMonthly = goJson.monthly;
+      }
+    }
+  } catch (e) {
+    console.warn('OpenCode Go quota fetch failed:', e);
+  }
+
+  return { summary: summary, trend: trend, cost: cost, models: models, quotas: quotas, goMonthly: goMonthly, range: range };
+}
+
+async function pushAIUsage() {
+  if (aiusageBusy) { addLog('AIUsage 发送中，请稍候。'); return; }
+  if (!epdCharacteristic) { addLog('请先连接设备。'); return; }
+  aiusageBusy = true;
+  try {
+    if (!updateDitcherOptions()) return;
+    const data = await fetchAIUsageData();
+    renderAIUsageToCanvas(data);
+    await sendimg();
+    addLog('AIUsage 截图已发送。');
+  } catch (e) {
+    console.error(e);
+    addLog('AIUsage 发送失败：' + (e.message || e));
+  } finally {
+    aiusageBusy = false;
+  }
+}
+
+function startAIUsageTimer() {
+  stopAIUsageTimer();
+  const minutes = Math.max(1, parseInt(document.getElementById('aiusageinterval').value, 10) || 30);
+  aiusageTimer = setInterval(pushAIUsage, minutes * 60 * 1000);
+  document.getElementById('aiusagetimerbutton').innerHTML = '停止定时';
+  addLog(`AIUsage 定时已开启：每 ${minutes} 分钟发送一次。`);
+}
+
+function stopAIUsageTimer() {
+  if (aiusageTimer) { clearInterval(aiusageTimer); aiusageTimer = null; }
+  const btn = document.getElementById('aiusagetimerbutton');
+  if (btn) btn.innerHTML = '开始定时';
+}
+
+function toggleAIUsageTimer() {
+  if (aiusageTimer) { stopAIUsageTimer(); addLog('AIUsage 定时已关闭。'); }
+  else startAIUsageTimer();
+}
+
 async function clearScreen() {
   if (confirm('确认清除屏幕内容?')) {
     await write(EpdCmd.CLEAR);
@@ -227,6 +586,11 @@ async function sendimg() {
   const ditherMode = document.getElementById('ditherMode').value;
   const epdDriverSelect = document.getElementById('epddriver');
   const selectedOption = epdDriverSelect.options[epdDriverSelect.selectedIndex];
+
+  if (!selectedOption) {
+    addLog('请先在“驱动”中选择受支持的墨水屏型号。');
+    return;
+  }
 
   if (selectedOption.getAttribute('data-size') !== canvasSize) {
     if (!confirm("警告：画布尺寸和驱动不匹配，是否继续？")) return;
@@ -335,6 +699,8 @@ function updateButtonStatus(forceDisabled = false) {
   document.getElementById("sendcmdbutton").disabled = status;
   document.getElementById("calendarmodebutton").disabled = status;
   document.getElementById("clockmodebutton").disabled = status;
+  document.getElementById("aiusagesendbutton").disabled = status;
+  document.getElementById("aiusagetimerbutton").disabled = status;
   document.getElementById("clearscreenbutton").disabled = status;
   document.getElementById("sendimgbutton").disabled = status;
   document.getElementById("setDriverbutton").disabled = status;
@@ -389,10 +755,15 @@ function handleNotify(value, idx) {
     addLog(`收到配置：${bytes2hex(data)}`);
     const epdpins = document.getElementById("epdpins");
     const epddriver = document.getElementById("epddriver");
+    const driverId = bytes2hex(data.slice(7, 8));
     epdpins.value = bytes2hex(data.slice(0, 7));
     if (data.length > 10) epdpins.value += bytes2hex(data.slice(10, 11));
-    epddriver.value = bytes2hex(data.slice(7, 8));
-    updateDitcherOptions();
+    if (Array.from(epddriver.options).some(option => option.value === driverId)) {
+      epddriver.value = driverId;
+      updateDitcherOptions();
+    } else {
+      addLog(`设备驱动 0x${driverId} 不在此页面的支持列表中；请手动选择对应型号。`);
+    }
   } else {
     if (textDecoder == null) textDecoder = new TextDecoder();
     const msg = textDecoder.decode(data);
@@ -553,13 +924,23 @@ function updateCanvasSize() {
 function updateDitcherOptions() {
   const epdDriverSelect = document.getElementById('epddriver');
   const selectedOption = epdDriverSelect.options[epdDriverSelect.selectedIndex];
+  if (!selectedOption) {
+    addLog('请选择受支持的墨水屏驱动后再传图。');
+    return false;
+  }
   const colorMode = selectedOption.getAttribute('data-color');
   const canvasSize = selectedOption.getAttribute('data-size');
+  const selectedSize = canvasSizes.find(size => size.name === canvasSize);
+  if (!colorMode || !selectedSize) {
+    addLog('当前驱动缺少画布或颜色配置，无法传图。');
+    return false;
+  }
 
-  if (colorMode) document.getElementById('ditherMode').value = colorMode;
-  if (canvasSize) document.getElementById('canvasSize').value = canvasSize;
+  document.getElementById('ditherMode').value = colorMode;
+  document.getElementById('canvasSize').value = canvasSize;
 
   updateCanvasSize(); // always update image
+  return true;
 }
 
 function rotateCanvas() {

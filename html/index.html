@@ -65,6 +65,26 @@
 			</div>
 		</fieldset>
 		<fieldset>
+			<legend>AIUsage 定时传图</legend>
+			<div class="flex-container options">
+				<div class="flex-group">
+					<label for="aiusageurl">API 地址:</label>
+					<input id="aiusageurl" type="url" value="http://localhost:3847/api/summary?range=month" size="46">
+				</div>
+				<div class="flex-group">
+					<label for="aiusageinterval">间隔(分):</label>
+					<input id="aiusageinterval" type="number" value="30" min="1" max="1440" style="width:70px">
+				</div>
+			</div>
+			<div class="flex-container options">
+				<div class="flex-group">
+					<button id="aiusagesendbutton" type="button" class="primary" onclick="pushAIUsage()">立即发送</button>
+					<button id="aiusagetimerbutton" type="button" class="primary" onclick="toggleAIUsageTimer()">开始定时</button>
+				</div>
+			</div>
+			<p>运行 <code>aiusage serve</code> 并连接设备后：点「立即发送」把用量仪表盘（总量 / 每日趋势 / 输入输出缓存分项 / 费用 / 会话 / Top 工具）渲染成图推送到墨水屏；「开始定时」后每隔指定分钟自动重发。范围由上方 API 地址里的 <code>range</code> 参数决定：<code>day</code>、<code>last30</code>、<code>week</code>、<code>month</code>、<code>all</code>。</p>
+		</fieldset>
+		<fieldset>
 			<legend>蓝牙传图</legend>
 			<div class="flex-container">
 				<input type="file" id="imageFile" accept=".png,.jpg,.bmp,.webp,.jpeg" onchange="updateImage()">
@@ -244,7 +264,7 @@
 	<script type="text/javascript" src="js/rle.js"></script>
 	<script type="text/javascript" src="js/paint.js"></script>
 	<script type="text/javascript" src="js/crop.js"></script>
-	<script type="text/javascript" src="js/main.js"></script>
+	<script type="text/javascript" src="js/main.js?v=aiusage-dashboard-driver-fix-20260813"></script>
 	<script>
 		var _hmt = _hmt || [];
 		(function () {
