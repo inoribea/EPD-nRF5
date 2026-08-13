@@ -419,6 +419,7 @@ function renderAIUsageToCanvas(data) {
   ctx.textAlign = 'center';
   ctx.font = smallSize + 'px Arial';
   ctx.fillText('TOP  ' + topModels, w / 2, footY);
+  ctx.textAlign = 'left';
 }
 
 async function fetchAIUsageData() {
