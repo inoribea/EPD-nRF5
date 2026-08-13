@@ -355,8 +355,10 @@ function renderAIUsageToCanvas(data) {
     ctx.textAlign = 'right';
     ctx.fillText(aiusageFormatTokens(tokVal), plotLeft - Math.round(w * 0.005), gy);
     ctx.textAlign = 'left';
+    ctx.fillStyle = '#FF0000';
     ctx.fillText('$' + (costVal >= 100 ? costVal.toFixed(0) : costVal >= 1 ? costVal.toFixed(2) : costVal.toFixed(3)),
                  plotRight + Math.round(w * 0.005), gy);
+    ctx.fillStyle = '#000000';
   }
   ctx.setLineDash([]);
   ctx.textBaseline = 'alphabetic';
@@ -366,9 +368,10 @@ function renderAIUsageToCanvas(data) {
 
   if (days.length > 0) {
     const slot = days.length > 1 ? plotW / (days.length - 1) : 0;
-    ctx.strokeStyle = '#FF0000';
+    ctx.strokeStyle = '#000000';
 
-    // Token line (solid red)
+    // Token line (dashed black)
+    ctx.setLineDash([Math.max(2, Math.round(w * 0.012)), Math.max(2, Math.round(w * 0.008))]);
     ctx.beginPath();
     for (let i = 0; i < days.length; i++) {
       const x = plotLeft + i * slot;
@@ -376,9 +379,10 @@ function renderAIUsageToCanvas(data) {
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.stroke();
+    ctx.setLineDash([]);
 
-    // Cost line (dashed red)
-    ctx.setLineDash([Math.max(2, Math.round(w * 0.012)), Math.max(2, Math.round(w * 0.008))]);
+    // Cost line (solid red)
+    ctx.strokeStyle = '#FF0000';
     ctx.beginPath();
     for (let i = 0; i < costs.length; i++) {
       const x = plotLeft + i * slot;
@@ -410,11 +414,11 @@ function renderAIUsageToCanvas(data) {
   drawQuotaBar(pad, quotaTop, quotaWidth, quotaHeight, 'CODEX WEEKLY', aiusageCodexWeekly(data.quotas), tinySize, smallSize);
   drawQuotaBar(pad, quotaTop + quotaHeight + quotaGap, quotaWidth, quotaHeight, 'OPENCODE GO MONTHLY', data.goMonthly, tinySize, smallSize);
 
-  // Footer: three most-used models
+  // Footer: up to four models supplied by AIUsage
   const footY = h - pad;
-  ctx.textAlign = 'left';
+  ctx.textAlign = 'center';
   ctx.font = smallSize + 'px Arial';
-  ctx.fillText('TOP  ' + topModels, pad, footY);
+  ctx.fillText('TOP  ' + topModels, w / 2, footY);
 }
 
 async function fetchAIUsageData() {
@@ -497,11 +501,26 @@ async function fetchAIUsageData() {
   return { summary: summary, trend: trend, cost: cost, models: models, quotas: quotas, goMonthly: goMonthly, range: range };
 }
 
-async function pushAIUsage() {
+async function reconnectAIUsageDevice() {
+  if (epdCharacteristic) return true;
+  if (!bleDevice) return false;
+
+  addLog('AIUsage 定时发送发现蓝牙已断开，正在自动重连...');
+  await connect();
+  if (!epdCharacteristic) addLog('AIUsage 自动重连失败，本次定时发送已跳过。');
+  return epdCharacteristic != null;
+}
+
+async function pushAIUsage(autoReconnect = false) {
   if (aiusageBusy) { addLog('AIUsage 发送中，请稍候。'); return; }
-  if (!epdCharacteristic) { addLog('请先连接设备。'); return; }
   aiusageBusy = true;
   try {
+    if (!epdCharacteristic) {
+      if (!autoReconnect || !await reconnectAIUsageDevice()) {
+        if (!autoReconnect) addLog('请先连接设备。');
+        return;
+      }
+    }
     if (!updateDitcherOptions()) return;
     const data = await fetchAIUsageData();
     renderAIUsageToCanvas(data);
@@ -518,7 +537,7 @@ async function pushAIUsage() {
 function startAIUsageTimer() {
   stopAIUsageTimer();
   const minutes = Math.max(1, parseInt(document.getElementById('aiusageinterval').value, 10) || 30);
-  aiusageTimer = setInterval(pushAIUsage, minutes * 60 * 1000);
+  aiusageTimer = setInterval(() => pushAIUsage(true), minutes * 60 * 1000);
   document.getElementById('aiusagetimerbutton').innerHTML = '停止定时';
   addLog(`AIUsage 定时已开启：每 ${minutes} 分钟发送一次。`);
 }
