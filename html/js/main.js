@@ -554,6 +554,28 @@ async function reconnectAIUsageDevice() {
   return epdCharacteristic != null;
 }
 
+async function promptToStartOpenChamberBridge() {
+  try {
+    const response = await fetch('http://127.0.0.1:8788/api/health', { cache: 'no-store' });
+    const payload = response.ok ? await response.json() : null;
+    if (payload && payload.ok === true) return true;
+  } catch (e) {
+    console.warn('OpenChamber bridge health check failed:', e);
+  }
+
+  const command = 'node tools/openchamber-quota-bridge.mjs';
+  if (confirm(`OpenChamber 配额桥未运行。\n\n请在项目根目录执行：\n${command}\n\n点击“确定”复制启动命令。`)) {
+    try {
+      await navigator.clipboard.writeText(command);
+      addLog('OpenChamber 配额桥启动命令已复制，请在终端执行。');
+    } catch (e) {
+      console.warn('Failed to copy OpenChamber bridge command:', e);
+      addLog(`请在项目根目录执行：${command}`);
+    }
+  }
+  return false;
+}
+
 async function pushAIUsage(autoReconnect = false) {
   if (aiusageBusy) { addLog('AIUsage 发送中，请稍候。'); return; }
   aiusageBusy = true;
@@ -565,6 +587,7 @@ async function pushAIUsage(autoReconnect = false) {
       }
     }
     if (!updateDitcherOptions()) return;
+    if (!autoReconnect && !await promptToStartOpenChamberBridge()) return;
     const data = await fetchAIUsageData();
     renderAIUsageToCanvas(data);
     await sendimg();

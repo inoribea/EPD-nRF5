@@ -47,6 +47,9 @@ const server = http.createServer(async (request, response) => {
   if (request.method !== 'GET') {
     return sendJson(response, 404, { ok: false, error: 'Not found' });
   }
+  if (url.pathname === '/api/health') {
+    return sendJson(response, 200, { ok: true, service: 'openchamber-quota-bridge' });
+  }
 
   const routes = {
     '/api/opencode-go/monthly': { providerId: 'opencode-go', windowName: 'monthly', error: 'OpenCode Go monthly quota is unavailable' },
