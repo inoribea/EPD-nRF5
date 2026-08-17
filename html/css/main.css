@@ -332,6 +332,12 @@ canvas.text-placement-mode {
     border-color: var(--primary-color);
 }
 
+.provider-button.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
 .tool-button.hide {
     display: none;
 }

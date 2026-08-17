@@ -78,6 +78,15 @@
 			</div>
 			<div class="flex-container options">
 				<div class="flex-group">
+					<label>显示提供商:</label>
+					<button type="button" class="provider-button active" data-provider="codexWeekly" onclick="toggleAIUsageProvider(this)">CODEX</button>
+					<button type="button" class="provider-button active" data-provider="commandWeekly" onclick="toggleAIUsageProvider(this)">COMMAND CODE</button>
+					<button type="button" class="provider-button active" data-provider="kimiWeekly" onclick="toggleAIUsageProvider(this)">KIMI CODE</button>
+					<button type="button" class="provider-button active" data-provider="goMonthly" onclick="toggleAIUsageProvider(this)">OPENCODE GO</button>
+				</div>
+			</div>
+			<div class="flex-container options">
+				<div class="flex-group">
 					<button id="aiusagesendbutton" type="button" class="primary" onclick="pushAIUsage()">立即发送</button>
 					<button id="aiusagetimerbutton" type="button" class="primary" onclick="toggleAIUsageTimer()">开始定时</button>
 				</div>
