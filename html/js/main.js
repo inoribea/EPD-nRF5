@@ -178,6 +178,30 @@ async function syncTime(mode) {
 // ---- AIUsage: fetch usage summary, render to canvas, push as image ----
 let aiusageTimer = null;
 let aiusageBusy = false;
+const aiusageProviderDefs = [
+  { key: 'codexWeekly', label: 'CODEX' },
+  { key: 'commandWeekly', label: 'COMMAND CODE' },
+  { key: 'kimiWeekly', label: 'KIMI CODE' },
+  { key: 'goMonthly', label: 'OPENCODE GO' },
+];
+let aiusageSelectedProviders = new Set(aiusageProviderDefs.map(def => def.key));
+
+function toggleAIUsageProvider(button) {
+  const key = button.dataset.provider;
+  if (!key) return;
+  if (aiusageSelectedProviders.has(key)) {
+    if (aiusageSelectedProviders.size <= 1) {
+      addLog('至少保留一个显示提供商。');
+      return;
+    }
+    aiusageSelectedProviders.delete(key);
+    button.classList.remove('active');
+  } else {
+    aiusageSelectedProviders.add(key);
+    button.classList.add('active');
+  }
+  addLog('显示提供商已更新，重新发送后生效。');
+}
 
 function aiusageNum(value, fallback) {
   return (typeof value === 'number' && Number.isFinite(value) && value >= 0) ? value : fallback;
@@ -211,16 +235,6 @@ function aiusagePeriodLabel(range) {
 function aiusageDailyTotal(row) {
   return (row.inputTokens || 0) + (row.outputTokens || 0) + (row.cacheReadTokens || 0) +
          (row.cacheWriteTokens || 0) + (row.thinkingTokens || 0);
-}
-
-function aiusageCodexWeekly(quotas) {
-  if (!Array.isArray(quotas)) return null;
-  const codex = quotas.find(quota => quota && quota.tool === 'codex' && quota.success === true);
-  const weekly = codex && Array.isArray(codex.tiers) ? codex.tiers.find(tier => tier && tier.name === 'weekly_limit') : null;
-  return weekly && typeof weekly.utilization === 'number' ? {
-    usedPercent: Math.max(0, Math.min(100, weekly.utilization)),
-    resetsAt: weekly.resetsAt || null,
-  } : null;
 }
 
 function drawQuotaBar(x, y, width, height, label, quota, tinySize, smallSize) {
@@ -434,14 +448,15 @@ function renderAIUsageToCanvas(data) {
     }
   }
 
-  // Compact subscription quota bars sit below the chart.
+// Compact subscription quota bars for the selected providers.
   const quotaTop = chartBottom + Math.round(h * 0.08);
   const quotaHeight = Math.max(28, Math.round(h * 0.095));
   const quotaGap = Math.max(6, Math.round(w * 0.015));
-  const quotaWidth = Math.floor((w - 2 * pad - 2 * quotaGap) / 3);
-  drawCompactQuotaBar(pad, quotaTop, quotaWidth, quotaHeight, 'CODEX', aiusageCodexWeekly(data.quotas), tinySize, smallSize);
-  drawCompactQuotaBar(pad + quotaWidth + quotaGap, quotaTop, quotaWidth, quotaHeight, 'KIMI CODE', data.kimiWeekly, tinySize, smallSize);
-  drawCompactQuotaBar(pad + 2 * (quotaWidth + quotaGap), quotaTop, quotaWidth, quotaHeight, 'OPENCODE GO', data.goMonthly, tinySize, smallSize);
+  const providers = aiusageProviderDefs.filter(def => aiusageSelectedProviders.has(def.key));
+  const quotaWidth = Math.floor((w - 2 * pad - (providers.length - 1) * quotaGap) / providers.length);
+  providers.forEach((def, i) => {
+    drawCompactQuotaBar(pad + i * (quotaWidth + quotaGap), quotaTop, quotaWidth, quotaHeight, def.label, data[def.key], tinySize, smallSize);
+  });
 
   // Footer: up to four models supplied by AIUsage
   const footY = h - pad;
@@ -503,20 +518,34 @@ async function fetchAIUsageData() {
     console.warn('AIUsage models fetch failed:', e);
   }
 
-  const quotasUrl = new URL('/api/quotas', parsed.origin);
-  let quotas = null;
-  try {
-    const quotasResp = await fetch(quotasUrl.toString());
-    if (quotasResp.ok) {
-      const quotasJson = await quotasResp.json();
-      quotas = Array.isArray(quotasJson.quotas) ? quotasJson.quotas : null;
-    }
-  } catch (e) {
-    console.warn('AIUsage quota fetch failed:', e);
-  }
-
+let codexWeekly = null;
+  let commandWeekly = null;
   let goMonthly = null;
   let kimiWeekly = null;
+  try {
+    const codexResp = await fetch('http://127.0.0.1:8788/api/codex/weekly');
+    if (codexResp.ok) {
+      const codexJson = await codexResp.json();
+      if (codexJson.ok === true && codexJson.quota && typeof codexJson.quota.usedPercent === 'number') {
+        codexWeekly = codexJson.quota;
+      }
+    }
+  } catch (e) {
+    console.warn('Codex quota fetch failed:', e);
+  }
+
+  try {
+    const commandResp = await fetch('http://127.0.0.1:8788/api/command-code/weekly');
+    if (commandResp.ok) {
+      const commandJson = await commandResp.json();
+      if (commandJson.ok === true && commandJson.quota && typeof commandJson.quota.usedPercent === 'number') {
+        commandWeekly = commandJson.quota;
+      }
+    }
+  } catch (e) {
+    console.warn('Command Code quota fetch failed:', e);
+  }
+
   try {
     const goResp = await fetch('http://127.0.0.1:8788/api/opencode-go/monthly');
     if (goResp.ok) {
@@ -541,7 +570,7 @@ async function fetchAIUsageData() {
     console.warn('Kimi Code quota fetch failed:', e);
   }
 
-  return { summary: summary, trend: trend, cost: cost, models: models, quotas: quotas, goMonthly: goMonthly, kimiWeekly: kimiWeekly, range: range };
+  return { summary: summary, trend: trend, cost: cost, models: models, codexWeekly: codexWeekly, commandWeekly: commandWeekly, goMonthly: goMonthly, kimiWeekly: kimiWeekly, range: range };
 }
 
 async function reconnectAIUsageDevice() {

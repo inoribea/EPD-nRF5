@@ -52,6 +52,8 @@ const server = http.createServer(async (request, response) => {
   }
 
   const routes = {
+    '/api/codex/weekly': { providerId: 'codex', windowName: 'weekly', error: 'Codex weekly quota is unavailable' },
+    '/api/command-code/weekly': { providerId: 'commandcode', windowName: 'weekly', error: 'Command Code weekly quota is unavailable' },
     '/api/opencode-go/monthly': { providerId: 'opencode-go', windowName: 'monthly', error: 'OpenCode Go monthly quota is unavailable' },
     '/api/kimi-code/weekly': { providerId: 'kimi-for-coding', windowName: 'weekly', error: 'Kimi Code weekly quota is unavailable' },
   };
