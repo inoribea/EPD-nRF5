@@ -7,6 +7,8 @@ const HOST = '127.0.0.1';
 const PORT = 8788;
 const SETTINGS_PATH = join(homedir(), '.config', 'openchamber', 'settings.json');
 const UPSTREAM_BASE_URL = 'http://127.0.0.1:4096/api/quota';
+const OPENCODE_AUTH_PATH = join(homedir(), '.local', 'share', 'opencode', 'auth.json');
+const COMMAND_CODE_BILLING_URL = 'https://api.commandcode.ai/alpha/billing/credits';
 
 function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, {
@@ -41,6 +43,38 @@ async function getQuota(providerId, windowName) {
   };
 }
 
+async function getCommandCodeWeeklyQuota() {
+  const auth = JSON.parse(await readFile(OPENCODE_AUTH_PATH, 'utf8'));
+  const entry = auth['command-code'];
+  const access = entry && typeof entry.access === 'string' && entry.access.length > 0 ? entry.access : null;
+  if (!access) throw new Error('Command Code oauth token is unavailable');
+
+  const upstream = await fetch(COMMAND_CODE_BILLING_URL, {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${access}`,
+      'User-Agent': 'cli',
+      'x-cli-environment': 'production',
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!upstream.ok) throw new Error(`Command Code billing request failed with HTTP ${upstream.status}`);
+
+  const payload = await upstream.json();
+  const weekly = payload?.windowLimits?.weekly;
+  const cap = weekly && typeof weekly.cap === 'number' && weekly.cap > 0 ? weekly.cap : null;
+  const used = weekly && typeof weekly.used === 'number' ? weekly.used : null;
+  if (cap === null || used === null) throw new Error('Command Code weekly quota is unavailable');
+
+  return {
+    ok: true,
+    quota: {
+      resetsAt: weekly.resetAt ?? null,
+      usedPercent: Math.max(0, Math.min(100, (used / cap) * 100)),
+    },
+  };
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? HOST}`);
   if (request.method === 'OPTIONS') return sendJson(response, 204, {});
@@ -53,10 +87,16 @@ const server = http.createServer(async (request, response) => {
 
   const routes = {
     '/api/codex/weekly': { providerId: 'codex', windowName: 'weekly', error: 'Codex weekly quota is unavailable' },
-    '/api/command-code/weekly': { providerId: 'commandcode', windowName: 'weekly', error: 'Command Code weekly quota is unavailable' },
     '/api/opencode-go/monthly': { providerId: 'opencode-go', windowName: 'monthly', error: 'OpenCode Go monthly quota is unavailable' },
     '/api/kimi-code/weekly': { providerId: 'kimi-for-coding', windowName: 'weekly', error: 'Kimi Code weekly quota is unavailable' },
   };
+  if (url.pathname === '/api/command-code/weekly') {
+    try {
+      return sendJson(response, 200, await getCommandCodeWeeklyQuota());
+    } catch {
+      return sendJson(response, 503, { ok: false, error: 'Command Code weekly quota is unavailable' });
+    }
+  }
   const route = routes[url.pathname];
   if (!route) return sendJson(response, 404, { ok: false, error: 'Not found' });
 
